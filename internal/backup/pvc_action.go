@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
 	"github.com/vmware-tanzu/velero-plugin-for-csi/internal/util"
@@ -147,6 +148,12 @@ func (p *PVCBackupItemAction) Execute(item runtime.Unstructured, backup *velerov
 	}
 	util.AddAnnotations(&pvc.ObjectMeta, vals)
 	util.AddLabels(&pvc.ObjectMeta, vals)
+
+	// Fix #4758. Add VolumeSnapshotLabel to CSI PV to avoid duplicated snapshotting in cloud provider snapshotter.
+	patchData := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`, util.CSIPersistentVolume, "true"))
+	if _, pvPatchError := client.CoreV1().PersistentVolumes().Patch(context.TODO(), pv.Name, types.MergePatchType, patchData, metav1.PatchOptions{}); pvPatchError != nil {
+		p.Log.Warnf("Failed to patch PersistentVolume %s: %v", pv.Name, pvPatchError)
+	}
 
 	additionalItems := []velero.ResourceIdentifier{
 		{

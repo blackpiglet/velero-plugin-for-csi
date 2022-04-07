@@ -178,8 +178,8 @@ func GetVolumeSnapshotContentForVolumeSnapshot(volSnap *snapshotv1beta1api.Volum
 		// we need to wait for the VolumeSnaphotContent to have a snapshot handle because during restore,
 		// we'll use that snapshot handle as the source for the VolumeSnapshotContent so it's statically
 		// bound to the existing snapshot.
-		if snapshotContent.Status == nil || snapshotContent.Status.SnapshotHandle == nil {
-			log.Infof("Waiting for volumesnapshotcontents %s to have snapshot handle. Retrying in %ds", snapshotContent.Name, interval/time.Second)
+		if snapshotContent.Status == nil || snapshotContent.Status.SnapshotHandle == nil || !*snapshotContent.Status.ReadyToUse {
+			log.Infof("Waiting for volumesnapshotcontents %s to have snapshot handle and ReadyToUse to true. Retrying in %ds", snapshotContent.Name, interval/time.Second)
 			return false, nil
 		}
 
