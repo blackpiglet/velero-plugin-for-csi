@@ -34,9 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/vmware-tanzu/velero-plugin-for-csi/internal/util"
-	"github.com/vmware-tanzu/velero/pkg/apis/velero/shared"
 	velerov1api "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	velerov2alpha1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v2alpha1"
 	"github.com/vmware-tanzu/velero/pkg/builder"
 	velerofake "github.com/vmware-tanzu/velero/pkg/generated/clientset/versioned/fake"
 	"github.com/vmware-tanzu/velero/pkg/plugin/velero"
@@ -55,7 +53,7 @@ func TestExecute(t *testing.T) {
 		operationID        string
 		expectedErr        error
 		expectedBackup     *velerov1api.Backup
-		expectedDataUpload *velerov2alpha1.DataUpload
+		expectedDataUpload *velerov1api.SnapshotBackup
 	}{
 		{
 			name:        "Skip PVC handling if SnapshotVolume set to false",
@@ -70,17 +68,16 @@ func TestExecute(t *testing.T) {
 		{
 			name:        "Test SnapshotMoveData",
 			backup:      builder.ForBackup("velero", "test").SnapshotMoveData(true).Result(),
-			pvc:         builder.ForPersistentVolumeClaim("velero", "testPVC").VolumeName("testPV").StorageClass("testSC").Phase(corev1.ClaimBound).Result(),
+			pvc:         builder.ForPersistentVolumeClaim("velero", "testPVC").VolumeName("testPV").StorageClass("testSC").Result(),
 			pv:          builder.ForPersistentVolume("testPV").CSI("hostpath", "testVolume").Result(),
-			sc:          builder.ForStorageClass("testSC").Provisioner("hostpath").Result(),
+			sc:          builder.ForStorageClass("testSC").Result(),
 			vs:          builder.ForVolumeSnapshot("velero", "testVS").Result(),
-			vsClass:     builder.ForVolumeSnapshotClass("tescVSClass").Driver("hostpath").ObjectMeta(builder.WithLabels(util.VolumeSnapshotClassSelectorLabel, "")).Result(),
 			operationID: ".",
 			expectedErr: nil,
-			expectedDataUpload: &velerov2alpha1.DataUpload{
+			expectedDataUpload: &velerov1api.SnapshotBackup{
 				TypeMeta: metav1.TypeMeta{
-					Kind:       "DataUpload",
-					APIVersion: velerov2alpha1.SchemeGroupVersion.String(),
+					Kind:       "SnapshotBackup",
+					APIVersion: velerov1api.SchemeGroupVersion.String(),
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "test-",
@@ -101,12 +98,11 @@ func TestExecute(t *testing.T) {
 						},
 					},
 				},
-				Spec: velerov2alpha1.DataUploadSpec{
-					SnapshotType: velerov2alpha1.SnapshotTypeCSI,
-					CSISnapshot: &velerov2alpha1.CSISnapshotSpec{
+				Spec: velerov1api.SnapshotBackupSpec{
+					SnapshotType: velerov1api.SnapshotTypeCSI,
+					CSISnapshot: &velerov1api.CSISnapshotSpec{
 						VolumeSnapshot: "",
 						StorageClass:   "testSC",
-						SnapshotClass:  "",
 					},
 					SourcePVC:       "testPVC",
 					SourceNamespace: "velero",
@@ -156,7 +152,7 @@ func TestExecute(t *testing.T) {
 			}
 
 			if tc.expectedDataUpload != nil {
-				dataUploadList, err := veleroClient.VeleroV2alpha1().DataUploads(tc.backup.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", velerov1api.BackupNameLabel, tc.backup.Name)})
+				dataUploadList, err := veleroClient.VeleroV1().SnapshotBackups(tc.backup.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", velerov1api.BackupNameLabel, tc.backup.Name)})
 				require.NoError(t, err)
 				require.Equal(t, 1, len(dataUploadList.Items))
 				require.Equal(t, *tc.expectedDataUpload, dataUploadList.Items[0])
@@ -170,7 +166,7 @@ func TestProgress(t *testing.T) {
 	tests := []struct {
 		name             string
 		backup           *velerov1api.Backup
-		dataUpload       velerov2alpha1.DataUpload
+		dataUpload       velerov1api.SnapshotBackup
 		operationID      string
 		expectedErr      string
 		expectedProgress velero.OperationProgress
@@ -184,10 +180,10 @@ func TestProgress(t *testing.T) {
 		{
 			name:   "DataUpload is found",
 			backup: builder.ForBackup("velero", "test").Result(),
-			dataUpload: velerov2alpha1.DataUpload{
+			dataUpload: velerov1api.SnapshotBackup{
 				TypeMeta: metav1.TypeMeta{
-					Kind:       "DataUpload",
-					APIVersion: "v2alpha1",
+					Kind:       "SnapshotBackup",
+					APIVersion: "v1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "velero",
@@ -196,9 +192,9 @@ func TestProgress(t *testing.T) {
 						util.AsyncOperationIDLabel: "testing",
 					},
 				},
-				Status: velerov2alpha1.DataUploadStatus{
-					Phase: velerov2alpha1.DataUploadPhaseFailed,
-					Progress: shared.DataMoveOperationProgress{
+				Status: velerov1api.SnapshotBackupStatus{
+					Phase: velerov1api.SnapshotBackupPhaseFailed,
+					Progress: velerov1api.DataMoveOperationProgress{
 						BytesDone:  1000,
 						TotalBytes: 1000,
 					},
@@ -235,7 +231,7 @@ func TestProgress(t *testing.T) {
 				VeleroClient:   veleroClient,
 			}
 
-			_, err := veleroClient.VeleroV2alpha1().DataUploads(tc.dataUpload.Namespace).Create(context.Background(), &tc.dataUpload, metav1.CreateOptions{})
+			_, err := veleroClient.VeleroV1().SnapshotBackups(tc.dataUpload.Namespace).Create(context.Background(), &tc.dataUpload, metav1.CreateOptions{})
 			require.NoError(t, err)
 
 			progress, err := pvcBIA.Progress(tc.operationID, tc.backup)
@@ -251,18 +247,18 @@ func TestCancel(t *testing.T) {
 	tests := []struct {
 		name               string
 		backup             *velerov1api.Backup
-		dataUpload         velerov2alpha1.DataUpload
+		dataUpload         velerov1api.SnapshotBackup
 		operationID        string
 		expectedErr        error
-		expectedDataUpload velerov2alpha1.DataUpload
+		expectedDataUpload velerov1api.SnapshotBackup
 	}{
 		{
 			name:   "Cancel DataUpload",
 			backup: builder.ForBackup("velero", "test").Result(),
-			dataUpload: velerov2alpha1.DataUpload{
+			dataUpload: velerov1api.SnapshotBackup{
 				TypeMeta: metav1.TypeMeta{
-					Kind:       "DataUpload",
-					APIVersion: "v2alpha1",
+					Kind:       "SnapshotBackup",
+					APIVersion: "v1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "velero",
@@ -274,10 +270,10 @@ func TestCancel(t *testing.T) {
 			},
 			operationID: "testing",
 			expectedErr: nil,
-			expectedDataUpload: velerov2alpha1.DataUpload{
+			expectedDataUpload: velerov1api.SnapshotBackup{
 				TypeMeta: metav1.TypeMeta{
-					Kind:       "DataUpload",
-					APIVersion: "v2alpha1",
+					Kind:       "SnapshotBackup",
+					APIVersion: "v1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "velero",
@@ -286,7 +282,7 @@ func TestCancel(t *testing.T) {
 						util.AsyncOperationIDLabel: "testing",
 					},
 				},
-				Spec: velerov2alpha1.DataUploadSpec{
+				Spec: velerov1api.SnapshotBackupSpec{
 					Cancel: true,
 				},
 			},
@@ -307,7 +303,7 @@ func TestCancel(t *testing.T) {
 				VeleroClient:   veleroClient,
 			}
 
-			_, err := veleroClient.VeleroV2alpha1().DataUploads(tc.dataUpload.Namespace).Create(context.Background(), &tc.dataUpload, metav1.CreateOptions{})
+			_, err := veleroClient.VeleroV1().SnapshotBackups(tc.dataUpload.Namespace).Create(context.Background(), &tc.dataUpload, metav1.CreateOptions{})
 			require.NoError(t, err)
 
 			err = pvcBIA.Cancel(tc.operationID, tc.backup)
@@ -315,7 +311,7 @@ func TestCancel(t *testing.T) {
 				require.Equal(t, err, tc.expectedErr)
 			}
 
-			du, err := veleroClient.VeleroV2alpha1().DataUploads(tc.dataUpload.Namespace).Get(context.Background(), tc.dataUpload.Name, metav1.GetOptions{})
+			du, err := veleroClient.VeleroV1().SnapshotBackups(tc.dataUpload.Namespace).Get(context.Background(), tc.dataUpload.Name, metav1.GetOptions{})
 			require.NoError(t, err)
 
 			require.Equal(t, *du, tc.expectedDataUpload)
